@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//Users/karen.kemble-diaz/dev/sp500-dashboard/src/lib/ai/**)",
+      "Read(//Users/karen.kemble-diaz/dev/sp500-dashboard/src/components/reporting/**)"
+    ]
+  }
+}
