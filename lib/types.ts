@@ -9,6 +9,7 @@ export interface LogEntry {
   marketContext: string
   baseCurrency: string
   fxConditions: string
+  accountStructure?: string
   rotationSuggested: string
   reasoning: string
   outcome?: string

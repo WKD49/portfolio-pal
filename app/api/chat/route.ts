@@ -21,6 +21,7 @@ export async function POST(req: NextRequest) {
           `Recommendation ${i + 1} (${entry.date}):`,
           `  Currency: ${entry.baseCurrency} | FX: ${entry.fxConditions}`,
           `  Market context: ${entry.marketContext}`,
+          ...(entry.accountStructure ? [`  Account structure: ${entry.accountStructure}`] : []),
           `  Rotation: ${entry.rotationSuggested}`,
           `  Reasoning: ${entry.reasoning}`,
         ]
