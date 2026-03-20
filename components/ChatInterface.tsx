@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { Send, RotateCcw } from 'lucide-react'
 import { Message, LogEntry } from '@/lib/types'
+import { MAX_USER_MSG_CHARS } from '@/lib/guardrails'
 import MessageBubble from './MessageBubble'
 import LogSidebar from './LogSidebar'
 
@@ -23,6 +24,7 @@ export default function ChatInterface() {
   const [logEntries, setLogEntries] = useState<LogEntry[]>([])
   const [logRefresh, setLogRefresh] = useState(0)
   const [error, setError] = useState<string | null>(null)
+  const [logWarning, setLogWarning] = useState<string | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const initialized = useRef(false)
@@ -54,14 +56,22 @@ export default function ChatInterface() {
       id: crypto.randomUUID(),
       date: new Date().toISOString().split('T')[0],
     }
-    await fetch('/api/log', {
+    // Rule 11 — check server-side validation result and warn the user if it fails
+    const res = await fetch('/api/log', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(entry),
     })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}))
+      setLogWarning(
+        err.error ?? 'The recommendation could not be saved to the log. It has not been recorded.'
+      )
+      return
+    }
     setLogEntries((prev) => [...prev, entry])
     setLogRefresh((n) => n + 1)
-  }, [])
+  }, [setLogWarning])
 
   async function sendToAI(currentMessages: Message[], currentLog: LogEntry[]) {
     setIsStreaming(true)
@@ -135,7 +145,16 @@ export default function ChatInterface() {
     const trimmed = input.trim()
     if (!trimmed || isStreaming) return
 
-    const userMessage: Message = { role: 'user', content: trimmed }
+    // Rule 17 — client-side defence-in-depth: truncate before sending
+    let content = trimmed
+    if (content.length > MAX_USER_MSG_CHARS) {
+      content = content.slice(0, MAX_USER_MSG_CHARS)
+      setLogWarning('Your message was very long and has been trimmed to fit the token budget.')
+    } else {
+      setLogWarning(null)
+    }
+
+    const userMessage: Message = { role: 'user', content }
     const newMessages = [...messages, userMessage]
     setMessages(newMessages)
     setInput('')
@@ -374,6 +393,23 @@ export default function ChatInterface() {
             <Send size={16} />
           </button>
         </div>
+        {logWarning && (
+          <div
+            style={{
+              maxWidth: '820px',
+              margin: '0.5rem auto 0',
+              background: 'rgba(200,150,30,0.1)',
+              border: '1px solid rgba(200,150,30,0.35)',
+              borderRadius: '6px',
+              padding: '0.5rem 0.75rem',
+              color: '#c8960f',
+              fontSize: '0.78rem',
+              fontFamily: 'Arial, sans-serif',
+            }}
+          >
+            {logWarning}
+          </div>
+        )}
         <div
           style={{
             maxWidth: '820px',
