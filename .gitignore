@@ -40,3 +40,8 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# financial data — never commit backups or log data
+/data/backups/
+/data/log.json
+/data/log.tmp
