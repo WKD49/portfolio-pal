@@ -20,10 +20,14 @@ function renderMarkdown(text: string): string {
       .replace(/`([^`]+)`/g, '<code>$1</code>')
       // Horizontal rule
       .replace(/^---$/gm, '<hr/>')
-      // Unordered list items
-      .replace(/^[-•]\s(.+)/gm, '<li>$1</li>')
+      // Unordered list items (including indented sub-items)
+      .replace(/^[ \t]*[-•]\s(.+)/gm, '<li>$1</li>')
+      // Numbered list items — 1. 2. etc (including indented)
+      .replace(/^[ \t]*\d+\.\s(.+)/gm, '<oli>$1</oli>')
       // Wrap consecutive <li> in <ul>
       .replace(/(<li>.*<\/li>\n?)+/g, (match) => `<ul>${match}</ul>`)
+      // Wrap consecutive <oli> in <ol>
+      .replace(/(<oli>.*<\/oli>\n?)+/g, (match) => `<ol>${match.replace(/<\/?oli>/g, (t) => t.replace('oli', 'li'))}</ol>`)
       // Paragraphs — wrap lines that aren't already HTML tags
       .split('\n')
       .map((line) => {
