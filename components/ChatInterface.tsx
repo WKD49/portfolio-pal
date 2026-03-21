@@ -1,11 +1,53 @@
 'use client'
 
 import { useState, useRef, useEffect, useCallback } from 'react'
-import { Send, RotateCcw } from 'lucide-react'
-import { Message, LogEntry } from '@/lib/types'
+import { Send, RotateCcw, UserCircle } from 'lucide-react'
+import { Message, LogEntry, UserProfile } from '@/lib/types'
 import { MAX_USER_MSG_CHARS } from '@/lib/guardrails'
 import MessageBubble from './MessageBubble'
 import LogSidebar from './LogSidebar'
+
+function formatUserProfile(p: UserProfile): string {
+  const date = new Date(p.sessionDate).toLocaleDateString('en-GB', {
+    day: 'numeric', month: 'long', year: 'numeric',
+  })
+  const lines: string[] = [
+    '--- USER PROFILE ---',
+    `Session date: ${date}`,
+  ]
+  if (p.marketNotes) lines.push(`Market notes: ${p.marketNotes}`)
+  lines.push('')
+  lines.push(`Base currency: ${p.baseCurrency}`)
+  lines.push(`Risk tolerance: ${p.riskTolerance} / 10`)
+  lines.push(`Time horizon: ${p.timeHorizon}`)
+  if (p.goals.length > 0) {
+    const goalLabels = p.goals.map((g) =>
+      g === 'Something else' && p.goalsOther ? p.goalsOther : g
+    )
+    lines.push(`Goals: ${goalLabels.join(', ')}`)
+  }
+  lines.push(`Draw income: ${p.drawsIncome ? `Yes — ideally beginning: ${p.incomeStartDate || 'unspecified'}` : 'No'}`)
+  lines.push('')
+  lines.push('Accounts:')
+  p.accounts.forEach((a, i) => {
+    lines.push(`${i + 1}. Description: ${a.description}`)
+    lines.push(`   Tax wrapper: ${a.taxWrapper}`)
+    if (a.approxValue) lines.push(`   Approx value: ${a.approxValue}`)
+    if (a.allocation) lines.push(`   Allocation: ${a.allocation}`)
+    if (a.primaryGoal) lines.push(`   Primary goal: ${a.primaryGoal}`)
+  })
+  if (p.fxExposures) {
+    lines.push('')
+    lines.push(`FX exposures: ${p.fxExposures}`)
+  }
+  lines.push('--- END PROFILE ---')
+  return lines.join('\n')
+}
+
+interface ChatInterfaceProps {
+  userProfile?: UserProfile
+  onEditProfile?: () => void
+}
 
 function extractLogEntry(text: string): Omit<LogEntry, 'id' | 'date'> | null {
   const match = text.match(/```log-entry\s*([\s\S]*?)```/)
@@ -17,7 +59,7 @@ function extractLogEntry(text: string): Omit<LogEntry, 'id' | 'date'> | null {
   }
 }
 
-export default function ChatInterface() {
+export default function ChatInterface({ userProfile, onEditProfile }: ChatInterfaceProps) {
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
   const [isStreaming, setIsStreaming] = useState(false)
@@ -37,11 +79,15 @@ export default function ChatInterface() {
       .catch(() => {})
   }, [])
 
-  // Trigger first greeting from Portfolio Pal
+  // Trigger first greeting from Portfolio Pal (with profile context if available)
   useEffect(() => {
     if (!initialized.current) {
       initialized.current = true
-      sendToAI([], [])
+      const initial: Message[] = userProfile
+        ? [{ role: 'user', content: formatUserProfile(userProfile) }]
+        : []
+      setMessages(initial)
+      sendToAI(initial, [])
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -231,29 +277,56 @@ export default function ChatInterface() {
           </div>
         </div>
 
-        <button
-          onClick={handleNewSession}
-          disabled={isStreaming}
-          title="New session"
-          style={{
-            background: 'none',
-            border: '1px solid var(--border)',
-            borderRadius: '6px',
-            padding: '0.4rem 0.75rem',
-            cursor: isStreaming ? 'not-allowed' : 'pointer',
-            color: 'var(--text-muted)',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '0.4rem',
-            fontSize: '0.72rem',
-            fontFamily: 'Arial, sans-serif',
-            letterSpacing: '0.04em',
-            opacity: isStreaming ? 0.5 : 1,
-          }}
-        >
-          <RotateCcw size={12} />
-          New session
-        </button>
+        <div style={{ display: 'flex', gap: '0.5rem' }}>
+          {onEditProfile && (
+            <button
+              onClick={onEditProfile}
+              disabled={isStreaming}
+              title="Edit profile"
+              style={{
+                background: 'none',
+                border: '1px solid var(--border)',
+                borderRadius: '6px',
+                padding: '0.4rem 0.75rem',
+                cursor: isStreaming ? 'not-allowed' : 'pointer',
+                color: 'var(--text-muted)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.4rem',
+                fontSize: '0.72rem',
+                fontFamily: 'Arial, sans-serif',
+                letterSpacing: '0.04em',
+                opacity: isStreaming ? 0.5 : 1,
+              }}
+            >
+              <UserCircle size={12} />
+              Edit profile
+            </button>
+          )}
+          <button
+            onClick={handleNewSession}
+            disabled={isStreaming}
+            title="New session"
+            style={{
+              background: 'none',
+              border: '1px solid var(--border)',
+              borderRadius: '6px',
+              padding: '0.4rem 0.75rem',
+              cursor: isStreaming ? 'not-allowed' : 'pointer',
+              color: 'var(--text-muted)',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.4rem',
+              fontSize: '0.72rem',
+              fontFamily: 'Arial, sans-serif',
+              letterSpacing: '0.04em',
+              opacity: isStreaming ? 0.5 : 1,
+            }}
+          >
+            <RotateCcw size={12} />
+            New session
+          </button>
+        </div>
       </header>
 
       {/* Messages */}
