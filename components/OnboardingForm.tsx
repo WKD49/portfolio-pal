@@ -1,15 +1,15 @@
 'use client'
 
-import { useState } from 'react'
-import { X } from 'lucide-react'
-import { UserProfile, PortfolioAccount } from '@/lib/types'
+import { useState, useRef } from 'react'
+import { X, ChevronDown, ChevronUp } from 'lucide-react'
+import { UserProfile, PortfolioAccount, AllocationItem } from '@/lib/types'
+import { classifyHolding, classifyHoldingSource } from '@/lib/context-builder'
 
 const GOALS = [
   'Grow my wealth',
   'Fund a large purchase',
   'Fund my retirement',
   'Something else',
-  'All of these',
 ]
 
 const TAX_WRAPPERS = [
@@ -52,22 +52,85 @@ function focusOff(e: React.FocusEvent<HTMLInputElement | HTMLTextAreaElement | H
 }
 
 function blankAccount(): PortfolioAccount {
-  return { description: '', taxWrapper: TAX_WRAPPERS[0], approxValue: '', allocation: '' }
+  return {
+    description: '',
+    taxWrapper: TAX_WRAPPERS[0],
+    approxValue: '',
+    allocation: [{ name: '', percentage: '' }],
+  }
+}
+
+const TEST_PROFILE: UserProfile = {
+  sessionDate: new Date().toISOString().split('T')[0],
+  baseCurrency: 'GBP',
+  riskTolerance: 7,
+  timeHorizon: '6 years until retirement',
+  age: '59',
+  goals: ['Fund my retirement', 'Grow my wealth'],
+  goalsOther: '',
+  drawsIncome: true,
+  incomeStartDate: '2030',
+  accounts: [
+    {
+      description: 'ISA',
+      taxWrapper: 'Stocks & Shares ISA',
+      approxValue: '£200,000',
+      allocation: [
+        {
+          name: 'Vanguard LifeStrategy 60/40',
+          percentage: '50',
+          compositionData: `Global Bond Index Fund GBP Hedged Acc	19.1%
+FTSE Developed World ex-U.K. Equity Index Fund GBP Acc	19.0%
+FTSE U.K. All Share Index Unit Trust GBP Acc	15.7%
+U.S. Equity Index Fund GBP Acc	15.4%
+U.K. Government Bond Index Fund GBP Acc	7.3%
+Emerging Markets Stock Index Fund GBP Acc	5.2%
+U.K. Investment Grade Bond Index Fund GBP Acc	3.5%
+FTSE Developed Europe ex-U.K. Equity Index Fund GBP Acc	3.0%
+Global Aggregate Bond UCITS ETF GBP Hedged Accumulating	2.9%
+U.K. Inflation-Linked Gilt Index Fund GBP Acc	2.0%
+Japan Stock Index Fund GBP Acc	1.6%
+U.S. Government Bond Index Fund GBP Hedged Acc	1.4%
+U.S. Investment Grade Credit Index Fund GBP Hedged Acc	1.1%
+Euro Government Bond Index Fund GBP Hedged Acc	1.1%
+Pacific ex-Japan Stock Index Fund GBP Acc	0.7%
+Euro Investment Grade Bond Index Fund GBP Hedged Acc	0.6%
+Japan Government Bond Index Fund GBP Hedged Acc	0.3%`,
+        },
+        { name: 'Global Shares Tracker', percentage: '25' },
+        { name: 'Active IG GBP Bond Fund', percentage: '25' },
+      ],
+    },
+    {
+      description: 'SIPP',
+      taxWrapper: 'SIPP',
+      approxValue: '£500,000',
+      allocation: [
+        { name: 'Vanguard 2030 Target Retirement Fund', percentage: '50' },
+        { name: 'Copper ETF', percentage: '10' },
+        { name: 'European Equity Tracker', percentage: '20' },
+        { name: 'Active Tech Fund', percentage: '20' },
+      ],
+    },
+  ],
+  individualPositionsPct: '',
+  marketNotes: '',
 }
 
 function blankProfile(): UserProfile {
   return {
     sessionDate: new Date().toISOString().split('T')[0],
-    marketNotes: '',
     baseCurrency: '',
     riskTolerance: 5,
     timeHorizon: '',
+    age: '',
     goals: [],
     goalsOther: '',
     drawsIncome: false,
     incomeStartDate: '',
     accounts: [blankAccount()],
-    fxExposures: '',
+    individualPositionsPct: '',
+    marketNotes: '',
   }
 }
 
@@ -76,9 +139,12 @@ interface Props {
 }
 
 export default function OnboardingForm({ onComplete }: Props) {
-  const [step, setStep] = useState<1 | 2 | 3 | 4>(1)
+  const [step, setStep] = useState<1 | 2 | 3>(1)
   const [draft, setDraft] = useState<UserProfile>(blankProfile)
   const [error, setError] = useState<string | null>(null)
+  const scrollRef = useRef<HTMLDivElement>(null)
+  // Track which allocation rows have composition panel open
+  const [openComposition, setOpenComposition] = useState<Record<string, boolean>>({})
 
   function set<K extends keyof UserProfile>(key: K, value: UserProfile[K]) {
     setDraft((d) => ({ ...d, [key]: value }))
@@ -88,6 +154,38 @@ export default function OnboardingForm({ onComplete }: Props) {
     setDraft((d) => {
       const accounts = [...d.accounts]
       accounts[index] = { ...accounts[index], [key]: value }
+      return { ...d, accounts }
+    })
+  }
+
+  function setAllocationItem(accountIndex: number, rowIndex: number, key: keyof AllocationItem, value: string) {
+    setDraft((d) => {
+      const accounts = [...d.accounts]
+      const alloc = [...accounts[accountIndex].allocation]
+      alloc[rowIndex] = { ...alloc[rowIndex], [key]: value }
+      accounts[accountIndex] = { ...accounts[accountIndex], allocation: alloc }
+      return { ...d, accounts }
+    })
+  }
+
+  function addAllocationRow(accountIndex: number) {
+    setDraft((d) => {
+      const accounts = [...d.accounts]
+      accounts[accountIndex] = {
+        ...accounts[accountIndex],
+        allocation: [...accounts[accountIndex].allocation, { name: '', percentage: '' }],
+      }
+      return { ...d, accounts }
+    })
+  }
+
+  function removeAllocationRow(accountIndex: number, rowIndex: number) {
+    setDraft((d) => {
+      const accounts = [...d.accounts]
+      accounts[accountIndex] = {
+        ...accounts[accountIndex],
+        allocation: accounts[accountIndex].allocation.filter((_, i) => i !== rowIndex),
+      }
       return { ...d, accounts }
     })
   }
@@ -109,27 +207,29 @@ export default function OnboardingForm({ onComplete }: Props) {
     })
   }
 
+  function toggleComposition(accountIndex: number, rowIndex: number) {
+    const key = `${accountIndex}-${rowIndex}`
+    setOpenComposition((prev) => ({ ...prev, [key]: !prev[key] }))
+  }
+
   function advance() {
     setError(null)
 
-    if (step === 1 && !draft.sessionDate) {
-      setError('Please enter today\'s date.')
-      return
-    }
-    if (step === 2) {
+    if (step === 1) {
       if (!draft.baseCurrency.trim()) { setError('Please enter your base currency.'); return }
       if (!draft.timeHorizon.trim()) { setError('Please enter your time horizon.'); return }
       if (draft.goals.length === 0) { setError('Please select at least one goal.'); return }
     }
-    if (step === 3) {
-      if (!draft.accounts[0].description.trim()) {
-        setError('Please add a description for Account 1.')
+    if (step === 2) {
+      if (draft.accounts[0].allocation.every(item => !item.name.trim())) {
+        setError('Please add at least one holding to Account 1.')
         return
       }
     }
 
-    if (step < 4) {
-      setStep((s) => (s + 1) as 1 | 2 | 3 | 4)
+    if (step < 3) {
+      setStep((s) => (s + 1) as 1 | 2 | 3)
+      scrollRef.current?.scrollTo({ top: 0 })
     } else {
       onComplete(draft)
     }
@@ -149,6 +249,7 @@ export default function OnboardingForm({ onComplete }: Props) {
 
   return (
     <div
+      ref={scrollRef}
       style={{
         minHeight: '100vh',
         background: 'var(--bg-primary)',
@@ -185,8 +286,29 @@ export default function OnboardingForm({ onComplete }: Props) {
               textTransform: 'uppercase',
             }}
           >
-            Macro-aware portfolio rotation adviser
+            Macro-aware portfolio adviser
           </div>
+        </div>
+
+        {/* Test data shortcut */}
+        <div style={{ textAlign: 'center', marginBottom: '1rem' }}>
+          <button
+            type="button"
+            onClick={() => { setDraft({ ...TEST_PROFILE, sessionDate: new Date().toISOString().split('T')[0] }); setError(null) }}
+            style={{
+              background: 'none',
+              border: '1px dashed var(--border)',
+              borderRadius: '6px',
+              padding: '0.3rem 0.75rem',
+              color: 'var(--text-muted)',
+              fontSize: '0.7rem',
+              fontFamily: 'Arial, sans-serif',
+              cursor: 'pointer',
+              letterSpacing: '0.04em',
+            }}
+          >
+            Fill test data
+          </button>
         </div>
 
         {/* Progress */}
@@ -201,42 +323,31 @@ export default function OnboardingForm({ onComplete }: Props) {
             textAlign: 'center',
           }}
         >
-          Step {step} of 4
+          Step {step} of 3
         </div>
 
-        {/* Step content — key forces remount and re-triggers fade-in */}
         <div key={step} className="fade-in">
 
+          {/* ── Step 1: About You ── */}
           {step === 1 && (
             <div>
-              <div style={{ marginBottom: '1.5rem' }}>
-                <label style={label}>Today&apos;s date</label>
-                <input
-                  type="date"
-                  value={draft.sessionDate}
-                  onChange={(e) => set('sessionDate', e.target.value)}
-                  style={{ ...field, colorScheme: 'dark' }}
-                  onFocus={focusOn}
-                  onBlur={focusOff}
-                />
+              {/* Security notice */}
+              <div
+                style={{
+                  background: 'rgba(201,168,76,0.08)',
+                  border: '1px solid rgba(201,168,76,0.25)',
+                  borderRadius: '8px',
+                  padding: '0.75rem 1rem',
+                  marginBottom: '1.5rem',
+                  fontFamily: 'Arial, sans-serif',
+                  fontSize: '0.78rem',
+                  color: 'var(--text-secondary)',
+                  lineHeight: 1.6,
+                }}
+              >
+                <strong style={{ color: 'var(--accent)' }}>Privacy notice:</strong> Portfolio Pal sends only percentage breakdowns and relative account weights to OpenAI for analysis. Your actual balance figures are never transmitted. Do not enter account numbers or your full name in any field.
               </div>
-              <div style={{ marginBottom: '1.5rem' }}>
-                <label style={label}>Any market notes? <span style={{ color: 'var(--text-muted)', textTransform: 'none', letterSpacing: 0 }}>(optional)</span></label>
-                <textarea
-                  value={draft.marketNotes}
-                  onChange={(e) => set('marketNotes', e.target.value)}
-                  placeholder="e.g. S&P down 3% this week, dollar weakening — optional but helps Portfolio Pal calibrate"
-                  rows={3}
-                  style={{ ...field, resize: 'vertical' }}
-                  onFocus={focusOn}
-                  onBlur={focusOff}
-                />
-              </div>
-            </div>
-          )}
 
-          {step === 2 && (
-            <div>
               <div style={{ marginBottom: '1.5rem' }}>
                 <label style={label}>Base currency</label>
                 <input
@@ -244,7 +355,22 @@ export default function OnboardingForm({ onComplete }: Props) {
                   value={draft.baseCurrency}
                   onChange={(e) => set('baseCurrency', e.target.value)}
                   placeholder="e.g. GBP"
-                  style={field}
+                  style={{ ...field, width: '8rem' }}
+                  onFocus={focusOn}
+                  onBlur={focusOff}
+                />
+              </div>
+
+              <div style={{ marginBottom: '1.5rem' }}>
+                <label style={label}>Your age</label>
+                <input
+                  type="number"
+                  min={18}
+                  max={100}
+                  value={draft.age}
+                  onChange={(e) => set('age', e.target.value)}
+                  placeholder="e.g. 45"
+                  style={{ ...field, width: '6rem' }}
                   onFocus={focusOn}
                   onBlur={focusOff}
                 />
@@ -277,7 +403,7 @@ export default function OnboardingForm({ onComplete }: Props) {
                   type="text"
                   value={draft.timeHorizon}
                   onChange={(e) => set('timeHorizon', e.target.value)}
-                  placeholder="e.g. 10 years, until retirement"
+                  placeholder="e.g. 10 years, until retirement in 2035"
                   style={field}
                   onFocus={focusOn}
                   onBlur={focusOff}
@@ -288,12 +414,7 @@ export default function OnboardingForm({ onComplete }: Props) {
                 <label style={label}>Your goals</label>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
                   {GOALS.map((g) => (
-                    <button
-                      key={g}
-                      type="button"
-                      onClick={() => toggleGoal(g)}
-                      style={btnStyle(draft.goals.includes(g))}
-                    >
+                    <button key={g} type="button" onClick={() => toggleGoal(g)} style={btnStyle(draft.goals.includes(g))}>
                       {g}
                     </button>
                   ))}
@@ -338,7 +459,8 @@ export default function OnboardingForm({ onComplete }: Props) {
             </div>
           )}
 
-          {step === 3 && (
+          {/* ── Step 2: Your Accounts ── */}
+          {step === 2 && (
             <div>
               {draft.accounts.map((acc, i) => (
                 <div
@@ -370,37 +492,14 @@ export default function OnboardingForm({ onComplete }: Props) {
                     <button
                       type="button"
                       onClick={() => removeAccount(i)}
-                      style={{
-                        position: 'absolute',
-                        top: '0.75rem',
-                        right: '0.75rem',
-                        background: 'none',
-                        border: 'none',
-                        cursor: 'pointer',
-                        color: 'var(--text-muted)',
-                        padding: '0.1rem',
-                        display: 'flex',
-                      }}
+                      style={{ position: 'absolute', top: '0.75rem', right: '0.75rem', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: '0.1rem', display: 'flex' }}
                     >
                       <X size={14} />
                     </button>
                   )}
 
                   <div style={{ marginBottom: '0.85rem' }}>
-                    <label style={label}>Brief description</label>
-                    <input
-                      type="text"
-                      value={acc.description}
-                      onChange={(e) => setAccount(i, 'description', e.target.value)}
-                      placeholder="e.g. UK equity ISA, global tracker SIPP"
-                      style={{ ...field, background: 'var(--bg-primary)' }}
-                      onFocus={focusOn}
-                      onBlur={focusOff}
-                    />
-                  </div>
-
-                  <div style={{ marginBottom: '0.85rem' }}>
-                    <label style={label}>Type of account</label>
+                    <label style={label}>Account type</label>
                     <select
                       value={acc.taxWrapper}
                       onChange={(e) => setAccount(i, 'taxWrapper', e.target.value)}
@@ -415,7 +514,10 @@ export default function OnboardingForm({ onComplete }: Props) {
                   </div>
 
                   <div style={{ marginBottom: '0.85rem' }}>
-                    <label style={label}>Approximate value</label>
+                    <label style={label}>
+                      Approximate value{' '}
+                      <span style={{ color: 'var(--text-muted)', textTransform: 'none', letterSpacing: 0 }}>(used for weighting only — no exact figures)</span>
+                    </label>
                     <input
                       type="text"
                       value={acc.approxValue}
@@ -427,38 +529,183 @@ export default function OnboardingForm({ onComplete }: Props) {
                     />
                   </div>
 
-                  <div style={{ marginBottom: draft.goals.length > 1 ? '0.85rem' : 0 }}>
-                    <label style={label}>Approximate allocation</label>
-                    <textarea
-                      value={acc.allocation}
-                      onChange={(e) => setAccount(i, 'allocation', e.target.value)}
-                      placeholder="e.g. 60% global tracker, 30% UK equity, 10% bonds"
-                      rows={2}
-                      style={{ ...field, background: 'var(--bg-primary)', resize: 'vertical' }}
-                      onFocus={focusOn}
-                      onBlur={focusOff}
-                    />
-                  </div>
+                  <div>
+                    <label style={label}>Holdings</label>
 
-                  {draft.goals.length > 1 && (
-                    <div>
-                      <label style={label}>Primary goal for this account</label>
-                      <select
-                        value={acc.primaryGoal ?? ''}
-                        onChange={(e) => setAccount(i, 'primaryGoal', e.target.value)}
-                        style={{ ...field, background: 'var(--bg-primary)' }}
-                        onFocus={focusOn}
-                        onBlur={focusOff}
-                      >
-                        <option value="">— select —</option>
-                        {draft.goals.map((g) => {
-                          const label = g === 'Something else' && draft.goalsOther ? draft.goalsOther : g
-                          return <option key={g} value={label}>{label}</option>
-                        })}
-                        <option value="All of them">All of them</option>
-                      </select>
-                    </div>
-                  )}
+                    {acc.allocation.map((item, ri) => {
+                      const compKey = `${i}-${ri}`
+                      const compOpen = openComposition[compKey] ?? false
+                      const hasComposition = !!item.compositionData?.trim()
+                      const source = item.name.trim() ? classifyHoldingSource(item.name.trim()) : 'unclassified'
+                      // Green = user has explicitly pasted exact breakdown data
+                      // Amber = auto-estimated (known index or pattern approximation)
+                      // Red = genuinely unknown
+                      const btnColor = hasComposition
+                        ? '#4aaf70'
+                        : source !== 'unclassified'
+                          ? '#c8960f'
+                          : '#e07070'
+                      const btnBg = hasComposition
+                        ? 'rgba(74,175,112,0.12)'
+                        : source !== 'unclassified'
+                          ? 'rgba(200,150,30,0.1)'
+                          : 'rgba(224,112,112,0.1)'
+                      const btnBorder = hasComposition
+                        ? 'rgba(74,175,112,0.35)'
+                        : source !== 'unclassified'
+                          ? 'rgba(200,150,30,0.35)'
+                          : 'rgba(224,112,112,0.35)'
+                      return (
+                        <div key={ri} style={{ marginBottom: '0.6rem' }}>
+                          {/* Fund name + % row */}
+                          <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
+                            <input
+                              type="text"
+                              value={item.name}
+                              onChange={(e) => setAllocationItem(i, ri, 'name', e.target.value)}
+                              placeholder="e.g. Vanguard LifeStrategy 60/40"
+                              style={{ ...field, background: 'var(--bg-primary)', flex: 1 }}
+                              onFocus={focusOn}
+                              onBlur={focusOff}
+                            />
+                            <input
+                              type="number"
+                              min={0}
+                              max={100}
+                              value={item.percentage}
+                              onChange={(e) => setAllocationItem(i, ri, 'percentage', e.target.value)}
+                              placeholder="%"
+                              style={{ ...field, background: 'var(--bg-primary)', width: '68px', flexShrink: 0 }}
+                              onFocus={focusOn}
+                              onBlur={focusOff}
+                            />
+                            {/* Expand composition toggle — colour reflects classification confidence */}
+                            <button
+                              type="button"
+                              onClick={() => toggleComposition(i, ri)}
+                              title={compOpen ? 'Hide fund breakdown' : 'Add fund breakdown'}
+                              style={{
+                                background: item.name.trim() ? btnBg : 'none',
+                                border: `1px solid ${item.name.trim() ? btnBorder : 'var(--border)'}`,
+                                borderRadius: '6px',
+                                cursor: 'pointer',
+                                color: item.name.trim() ? btnColor : 'var(--text-muted)',
+                                padding: '0.35rem',
+                                display: 'flex',
+                                flexShrink: 0,
+                              }}
+                            >
+                              {compOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                            </button>
+                            {acc.allocation.length > 1 && (
+                              <button
+                                type="button"
+                                onClick={() => removeAllocationRow(i, ri)}
+                                style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: '0.1rem', display: 'flex', flexShrink: 0 }}
+                              >
+                                <X size={14} />
+                              </button>
+                            )}
+                          </div>
+
+                          {/* Composition data panel */}
+                          {compOpen && (() => {
+                            const trimmedName = item.name.trim()
+                            const approxBreakdown = !hasComposition && (source === 'known-index' || source === 'pattern')
+                              ? classifyHolding(trimmedName)
+                              : null
+                            const needsBreakdown = !hasComposition && source === 'unclassified'
+                            const borderColor = needsBreakdown ? 'var(--accent)' : source === 'pattern' ? 'rgba(200,150,30,0.5)' : source === 'known-index' ? 'rgba(74,175,112,0.4)' : 'var(--border)'
+                            return (
+                            <div className="fade-in" style={{ marginTop: '0.5rem', paddingLeft: '0.5rem', borderLeft: `2px solid ${borderColor}` }}>
+                              <label style={{ ...label, color: needsBreakdown ? 'var(--accent)' : 'var(--text-muted)' }}>
+                                Fund breakdown{' '}
+                                {needsBreakdown
+                                  ? <span style={{ color: 'var(--accent)', textTransform: 'none', letterSpacing: 0, fontWeight: 400 }}>— needed for accurate look-through</span>
+                                  : hasComposition
+                                    ? <span style={{ color: 'var(--text-muted)', textTransform: 'none', letterSpacing: 0 }}>(user-provided)</span>
+                                    : source === 'known-index'
+                                      ? <span style={{ color: '#4aaf70', textTransform: 'none', letterSpacing: 0, fontWeight: 400 }}>— known index data</span>
+                                      : <span style={{ color: '#c8960f', textTransform: 'none', letterSpacing: 0, fontWeight: 400 }}>— estimated from index approximation</span>
+                                }
+                              </label>
+
+                              {/* Approximate breakdown preview */}
+                              {approxBreakdown && (
+                                <div style={{ marginBottom: '0.6rem' }}>
+                                  <div style={{ fontFamily: 'Arial, sans-serif', fontSize: '0.7rem', color: 'var(--text-muted)', marginBottom: '0.35rem', lineHeight: 1.5 }}>
+                                    {source === 'known-index'
+                                      ? 'Portfolio Pal will use this breakdown automatically — no action needed. You can paste the exact factsheet data below to improve precision.'
+                                      : 'Approximate breakdown — Portfolio Pal will use this as a best-effort estimate. Paste the exact factsheet data below to improve precision.'
+                                    }
+                                  </div>
+                                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+                                    {approxBreakdown.map(({ subClass, pct }) => (
+                                      <span
+                                        key={subClass}
+                                        style={{
+                                          background: source === 'known-index' ? 'rgba(74,175,112,0.1)' : 'rgba(200,150,30,0.1)',
+                                          border: `1px solid ${source === 'known-index' ? 'rgba(74,175,112,0.3)' : 'rgba(200,150,30,0.3)'}`,
+                                          borderRadius: '4px',
+                                          padding: '2px 7px',
+                                          fontSize: '0.65rem',
+                                          fontFamily: 'Arial, sans-serif',
+                                          color: source === 'known-index' ? '#4aaf70' : '#c8960f',
+                                          whiteSpace: 'nowrap',
+                                        }}
+                                      >
+                                        {subClass}: {pct.toFixed(1)}%
+                                      </span>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+
+                              {!approxBreakdown && !hasComposition && (
+                                <div style={{ fontFamily: 'Arial, sans-serif', fontSize: '0.72rem', color: 'var(--text-muted)', marginBottom: '0.4rem', lineHeight: 1.5 }}>
+                                  Go to the fund&apos;s product page, find the holdings or portfolio breakdown table, and paste it here. This lets Portfolio Pal analyse your sub-asset class exposure precisely.
+                                </div>
+                              )}
+
+                              <textarea
+                                value={item.compositionData ?? ''}
+                                onChange={(e) => setAllocationItem(i, ri, 'compositionData', e.target.value)}
+                                placeholder={approxBreakdown
+                                  ? `Paste exact factsheet data here to override the estimate above\ne.g.\nFTSE U.K. All Share Index\t15.7%\nU.S. Equity Index Fund\t15.4%\n...`
+                                  : `e.g.\nFTSE U.K. All Share Index\t15.7%\nU.S. Equity Index Fund\t15.4%\n...`
+                                }
+                                rows={4}
+                                style={{ ...field, background: 'var(--bg-primary)', resize: 'vertical', fontSize: '0.78rem' }}
+                                onFocus={focusOn}
+                                onBlur={focusOff}
+                              />
+                            </div>
+                          )})()}
+                        </div>
+                      )
+                    })}
+
+                    {/* Allocation total */}
+                    {(() => {
+                      const total = acc.allocation.reduce((sum, item) => sum + (parseFloat(item.percentage) || 0), 0)
+                      const hasAny = acc.allocation.some(item => item.percentage !== '')
+                      if (!hasAny) return null
+                      const color = total > 100 ? '#e07070' : total === 100 ? 'var(--accent)' : '#c8960f'
+                      return (
+                        <div style={{ textAlign: 'right', fontSize: '0.72rem', fontFamily: 'Arial, sans-serif', color, marginBottom: '0.4rem' }}>
+                          Total: {total}%{total === 100 ? ' ✓' : ''}
+                        </div>
+                      )
+                    })()}
+
+                    <button
+                      type="button"
+                      onClick={() => addAllocationRow(i)}
+                      style={{ background: 'none', border: '1px dashed var(--border)', borderRadius: '6px', padding: '0.3rem 0.7rem', color: 'var(--text-muted)', fontSize: '0.78rem', fontFamily: 'Arial, sans-serif', cursor: 'pointer', letterSpacing: '0.03em' }}
+                    >
+                      + Add holding
+                    </button>
+                  </div>
                 </div>
               ))}
 
@@ -484,18 +731,129 @@ export default function OnboardingForm({ onComplete }: Props) {
             </div>
           )}
 
-          {step === 4 && (
+          {/* ── Step 3: Additional Context ── */}
+          {step === 3 && (
             <div>
+              {/* Look-through nudge — show holdings missing composition data */}
+              {(() => {
+                const missing: { account: string; holding: string }[] = []
+                for (const acc of draft.accounts) {
+                  for (const item of acc.allocation) {
+                    const name = item.name.trim()
+                    if (!name) continue
+                    // Skip if user has already pasted a breakdown
+                    if (item.compositionData?.trim()) continue
+                    // Skip if the name auto-classifies via known patterns
+                    const result = classifyHolding(name)
+                    const isUnclassified = result.length === 1 && result[0].subClass === 'Other / unclassified'
+                    if (isUnclassified) {
+                      missing.push({ account: acc.taxWrapper || 'Account', holding: name })
+                    }
+                  }
+                }
+                if (missing.length === 0) return null
+                return (
+                  <div
+                    style={{
+                      background: 'rgba(201,168,76,0.07)',
+                      border: '1px solid rgba(201,168,76,0.3)',
+                      borderRadius: '8px',
+                      padding: '0.85rem 1rem',
+                      marginBottom: '1.5rem',
+                      fontFamily: 'Arial, sans-serif',
+                    }}
+                  >
+                    <div style={{ fontSize: '0.72rem', fontWeight: 600, color: 'var(--accent)', letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: '0.4rem' }}>
+                      Look-through analysis incomplete
+                    </div>
+                    <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', lineHeight: 1.55, marginBottom: '0.6rem' }}>
+                      The following holdings have no fund breakdown. Portfolio Pal will show them as unclassified, which may skew your sub-asset class picture. If you can provide a breakdown, go back and paste it in.
+                    </div>
+                    <ul style={{ margin: 0, padding: '0 0 0 1rem', fontSize: '0.78rem', color: 'var(--text-secondary)', lineHeight: 1.7 }}>
+                      {missing.map((m, i) => (
+                        <li key={i}>
+                          <span style={{ color: 'var(--text-primary)' }}>{m.holding}</span>
+                          <span style={{ color: 'var(--text-muted)' }}> — {m.account}</span>
+                        </li>
+                      ))}
+                    </ul>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setError(null)
+                        // Auto-expand composition panels for all unclassified holdings
+                        const expanded: Record<string, boolean> = { ...openComposition }
+                        draft.accounts.forEach((acc, ai) => {
+                          acc.allocation.forEach((item, ri) => {
+                            const name = item.name.trim()
+                            if (!name || item.compositionData?.trim()) return
+                            const result = classifyHolding(name)
+                            const isUnclassified = result.length === 1 && result[0].subClass === 'Other / unclassified'
+                            if (isUnclassified) expanded[`${ai}-${ri}`] = true
+                          })
+                        })
+                        setOpenComposition(expanded)
+                        setStep(2)
+                        scrollRef.current?.scrollTo({ top: 0 })
+                      }}
+                      style={{
+                        marginTop: '0.65rem',
+                        background: 'none',
+                        border: '1px solid rgba(201,168,76,0.4)',
+                        borderRadius: '6px',
+                        padding: '0.3rem 0.75rem',
+                        color: 'var(--accent)',
+                        fontSize: '0.73rem',
+                        fontFamily: 'Arial, sans-serif',
+                        cursor: 'pointer',
+                        letterSpacing: '0.03em',
+                      }}
+                    >
+                      ← Go back and add breakdown
+                    </button>
+                  </div>
+                )
+              })()}
+
               <div style={{ marginBottom: '1.5rem' }}>
                 <label style={label}>
-                  Any significant foreign currency exposures across your accounts?{' '}
+                  Individual positions{' '}
                   <span style={{ color: 'var(--text-muted)', textTransform: 'none', letterSpacing: 0 }}>(optional)</span>
                 </label>
+                <div style={{ fontFamily: 'Arial, sans-serif', fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '0.6rem', lineHeight: 1.5 }}>
+                  If you allocate a small portion of your portfolio to individual stocks or concentrated bets, enter the approximate percentage here. Portfolio Pal will assess this separately.
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <input
+                    type="number"
+                    min={0}
+                    max={30}
+                    value={draft.individualPositionsPct ?? ''}
+                    onChange={(e) => set('individualPositionsPct', e.target.value)}
+                    placeholder="0"
+                    style={{ ...field, width: '5rem' }}
+                    onFocus={focusOn}
+                    onBlur={focusOff}
+                  />
+                  <span style={{ fontFamily: 'Arial, sans-serif', fontSize: '0.9rem', color: 'var(--text-muted)' }}>% of total portfolio</span>
+                </div>
+              </div>
+
+              <div style={{ marginBottom: '1.5rem' }}>
+                <label style={label}>
+                  Qualitative market context{' '}
+                  <span style={{ color: 'var(--text-muted)', textTransform: 'none', letterSpacing: 0 }}>(optional but recommended)</span>
+                </label>
+                <div style={{ fontFamily: 'Arial, sans-serif', fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '0.6rem', lineHeight: 1.5 }}>
+                  Live macro data is pulled in automatically, but numbers alone don&apos;t tell the full story. Add your interpretation of the current environment — what the trends mean, what you&apos;re reading, what the market narrative is right now.
+                  <br /><br />
+                  Tip: ask Gemini or ChatGPT — <em>&ldquo;You are a strategic asset allocator. Give me a qualitative summary of the current macro environment — what the trends in rates, currencies, commodities and equities are telling us, and what the key risks are.&rdquo;</em> — and paste the response here.
+                </div>
                 <textarea
-                  value={draft.fxExposures}
-                  onChange={(e) => set('fxExposures', e.target.value)}
-                  placeholder="e.g. ~30% of ISA is in USD-denominated ETFs, unhedged"
-                  rows={3}
+                  value={draft.marketNotes ?? ''}
+                  onChange={(e) => set('marketNotes', e.target.value)}
+                  placeholder="e.g. Concerned about US tech valuations after recent rally. Read FT piece on ECB divergence from Fed..."
+                  rows={4}
                   style={{ ...field, resize: 'vertical' }}
                   onFocus={focusOn}
                   onBlur={focusOff}
@@ -527,7 +885,7 @@ export default function OnboardingForm({ onComplete }: Props) {
             {step > 1 && (
               <button
                 type="button"
-                onClick={() => { setError(null); setStep((s) => (s - 1) as 1 | 2 | 3 | 4) }}
+                onClick={() => { setError(null); setStep((s) => (s - 1) as 1 | 2 | 3); scrollRef.current?.scrollTo({ top: 0 }) }}
                 style={{
                   flex: '0 0 auto',
                   background: 'none',
@@ -560,7 +918,7 @@ export default function OnboardingForm({ onComplete }: Props) {
                 letterSpacing: '0.02em',
               }}
             >
-              {step < 4 ? 'Continue →' : 'Start my session →'}
+              {step < 3 ? 'Continue →' : 'Build my portfolio →'}
             </button>
           </div>
         </div>

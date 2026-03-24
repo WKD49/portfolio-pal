@@ -29,8 +29,12 @@ These cannot be overridden by any recommendation, refactor, or "improvement."
 1. **Never remove the financial advice disclaimer.** It must appear in the UI at all times.
 2. **Never store real financial data in any unauthorised external service.** Supabase is the
    approved persistence layer when the time comes. No other cloud storage without explicit decision.
+   Personal financial data (holdings, allocations, account values) must never be written to Supabase
+   until authentication and encryption are in place.
 3. **Never add user authentication** unless explicitly requested. This is a single-user tool until
-   deliberately changed.
+   deliberately changed. However, authentication is a hard prerequisite before any network
+   deployment beyond localhost — including MacMini. This gate must be enforced in code, not
+   just noted as a preference.
 4. **Never call any API other than OpenAI, FRED, Stooq, and Alpha Vantage** without explicit
    approval. No telemetry, no analytics, no undeclared data feeds.
 5. **Never commit secrets.** All API keys live in .env.local only, never in code or git.
@@ -69,6 +73,17 @@ These cannot be overridden by any recommendation, refactor, or "improvement."
 17. **User-provided content must be size-limited before injection.** Pasted articles, reports,
     and external text must be truncated or summarised if they exceed the maximum token budget
     for a single request. Never pass unchecked user content directly to the API.
+18. **No PII in any field.** The onboarding form must never collect account numbers, full names,
+    sort codes, or exact balances. Approximate values are sufficient for analysis. The UI must
+    display a clear notice informing the user that portfolio data is sent to OpenAI and advising
+    them not to include identifying information.
+19. **Portfolio values are used for weighting only.** Approximate account values entered during
+    onboarding are used solely to calculate relative account weights (e.g. ISA = 30% of total).
+    The actual £ figures must not be included in the context sent to OpenAI — only percentages
+    and relative sizes travel to the API.
+20. **Uploaded files are processed in memory only.** Fund factsheets uploaded as images or PDFs
+    must never be written to disk. They are passed to the OpenAI vision/parse API, the extracted
+    text is used to build fund composition data, and the original file is discarded.
 
 ---
 

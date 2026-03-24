@@ -1,5 +1,6 @@
 'use client'
 
+import { marked } from 'marked'
 import { Message } from '@/lib/types'
 
 interface Props {
@@ -7,43 +8,51 @@ interface Props {
   isStreaming?: boolean
 }
 
-function renderMarkdown(text: string): string {
-  return (
-    text
-      // Section headers like "**MACRO ASSESSMENT**" → styled h2
-      .replace(/^\*\*([A-Z][A-Z\s]+)\*\*$/gm, '<h2>$1</h2>')
-      // Bold
-      .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-      // Italic
-      .replace(/\*(.+?)\*/g, '<em>$1</em>')
-      // Inline code
-      .replace(/`([^`]+)`/g, '<code>$1</code>')
-      // Horizontal rule
-      .replace(/^---$/gm, '<hr/>')
-      // Unordered list items (including indented sub-items)
-      .replace(/^[ \t]*[-•]\s(.+)/gm, '<li>$1</li>')
-      // Numbered list items — 1. 2. etc (including indented)
-      .replace(/^[ \t]*\d+\.\s(.+)/gm, '<oli>$1</oli>')
-      // Wrap consecutive <li> in <ul>
-      .replace(/(<li>.*<\/li>\n?)+/g, (match) => `<ul>${match}</ul>`)
-      // Wrap consecutive <oli> in <ol>
-      .replace(/(<oli>.*<\/oli>\n?)+/g, (match) => `<ol>${match.replace(/<\/?oli>/g, (t) => t.replace('oli', 'li'))}</ol>`)
-      // Paragraphs — wrap lines that aren't already HTML tags
-      .split('\n')
-      .map((line) => {
-        const trimmed = line.trim()
-        if (!trimmed) return ''
-        if (/^<(h[1-6]|ul|ol|li|hr|blockquote)/.test(trimmed)) return trimmed
-        return `<p>${trimmed}</p>`
-      })
-      .filter(Boolean)
-      .join('\n')
-  )
+interface PortfolioResponse {
+  portfolioAssessment?: string
+  rotationalSuggestions?: string
+  logEntry?: unknown
 }
 
-// Strip the log-entry JSON block from the displayed message
-function stripLogEntry(text: string): string {
-  return text.replace(/```log-entry[\s\S]*?```/g, '').trim()
+// marked v17 — configure via marked.use(), not the deprecated setOptions
+marked.use({ async: false, gfm: true })
+
+function renderSection(text: string): string {
+  if (!text) return ''
+  // Ensure blank line before lists and bold-only lines
+  const normalised = text
+    .replace(/\r\n/g, '\n')
+    .replace(/([^\n])\n([-*] )/g, '$1\n\n$2')
+    .replace(/([^\n])\n(\d+\. )/g, '$1\n\n$2')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+  const html = marked.parse(normalised) as string
+  // Remove any unpaired ** that marked left as literals
+  return html.replace(/\*\*/g, '')
+}
+
+function tryParseResponse(content: string): PortfolioResponse | null {
+  if (!content.trim().startsWith('{')) return null
+  try {
+    const parsed = JSON.parse(content)
+    if (parsed && typeof parsed === 'object' && ('portfolioAssessment' in parsed || 'rotationalSuggestions' in parsed)) {
+      return parsed as PortfolioResponse
+    }
+    return null
+  } catch {
+    return null
+  }
+}
+
+const sectionHeadingStyle: React.CSSProperties = {
+  fontSize: '0.65rem',
+  letterSpacing: '0.12em',
+  textTransform: 'uppercase' as const,
+  color: 'var(--accent)',
+  fontFamily: 'Arial, sans-serif',
+  fontWeight: 600,
+  marginBottom: '0.6rem',
+  marginTop: '1.5rem',
 }
 
 export default function MessageBubble({ message, isStreaming }: Props) {
@@ -69,12 +78,98 @@ export default function MessageBubble({ message, isStreaming }: Props) {
     )
   }
 
-  const displayContent = stripLogEntry(message.content)
-  const html = renderMarkdown(displayContent)
+  // Show loading state while streaming (accumulating JSON)
+  if (isStreaming) {
+    return (
+      <div className="mb-8">
+        <div
+          style={{
+            fontSize: '0.65rem',
+            letterSpacing: '0.1em',
+            textTransform: 'uppercase',
+            color: 'var(--accent)',
+            marginBottom: '0.6rem',
+            fontFamily: 'Arial, sans-serif',
+            fontWeight: 600,
+          }}
+        >
+          Portfolio Pal
+        </div>
+        <div
+          style={{
+            fontSize: '0.85rem',
+            color: 'var(--text-muted)',
+            fontFamily: 'Arial, sans-serif',
+            fontStyle: 'italic',
+          }}
+        >
+          Analysing your portfolio
+          <span
+            style={{
+              display: 'inline-block',
+              width: '6px',
+              height: '14px',
+              background: 'var(--accent)',
+              borderRadius: '1px',
+              marginLeft: '4px',
+              verticalAlign: 'text-bottom',
+              animation: 'blink 1s step-end infinite',
+            }}
+          />
+        </div>
+        <style>{`@keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }`}</style>
+      </div>
+    )
+  }
 
+  // Try to parse as structured JSON response
+  const structured = tryParseResponse(message.content)
+
+  if (structured) {
+    return (
+      <div className="mb-8">
+        <div
+          style={{
+            fontSize: '0.65rem',
+            letterSpacing: '0.1em',
+            textTransform: 'uppercase',
+            color: 'var(--accent)',
+            marginBottom: '0.6rem',
+            fontFamily: 'Arial, sans-serif',
+            fontWeight: 600,
+          }}
+        >
+          Portfolio Pal
+        </div>
+
+        {structured.portfolioAssessment && (
+          <>
+            <div style={{ ...sectionHeadingStyle, marginTop: 0 }}>Portfolio Assessment</div>
+            <div
+              className="prose-pal"
+              style={{ fontSize: '0.95rem', color: 'var(--text-primary)' }}
+              dangerouslySetInnerHTML={{ __html: renderSection(structured.portfolioAssessment) }}
+            />
+          </>
+        )}
+
+        {structured.rotationalSuggestions && (
+          <>
+            <div style={sectionHeadingStyle}>Rotational Suggestions</div>
+            <div
+              className="prose-pal"
+              style={{ fontSize: '0.95rem', color: 'var(--text-primary)' }}
+              dangerouslySetInnerHTML={{ __html: renderSection(structured.rotationalSuggestions) }}
+            />
+          </>
+        )}
+      </div>
+    )
+  }
+
+  // Fallback: plain text render (for error messages, older messages, etc.)
   return (
     <div className="mb-8">
-      {/* Advisor label */}
       <div
         style={{
           fontSize: '0.65rem',
@@ -89,24 +184,16 @@ export default function MessageBubble({ message, isStreaming }: Props) {
         Portfolio Pal
       </div>
       <div
-        className="prose-pal"
-        style={{ fontSize: '0.95rem', color: 'var(--text-primary)' }}
-        dangerouslySetInnerHTML={{ __html: html }}
-      />
-      {isStreaming && (
-        <span
-          style={{
-            display: 'inline-block',
-            width: '8px',
-            height: '16px',
-            background: 'var(--accent)',
-            marginLeft: '2px',
-            borderRadius: '1px',
-            animation: 'blink 1s step-end infinite',
-          }}
-        />
-      )}
-      <style>{`@keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }`}</style>
+        style={{
+          fontSize: '0.95rem',
+          color: 'var(--text-primary)',
+          fontFamily: 'Arial, sans-serif',
+          lineHeight: '1.65',
+          whiteSpace: 'pre-wrap',
+        }}
+      >
+        {message.content}
+      </div>
     </div>
   )
 }

@@ -63,8 +63,8 @@ export function estimateMessagesTokens(messages: { role: string; content: string
 // Update these if OpenAI reprices or the model changes.
 // gpt-4o pricing as of early 2026: $2.50/1M input tokens, $10.00/1M output tokens.
 
-export const MAX_INPUT_TOKENS = 6000       // ~24,000 chars total prompt
-export const MAX_OUTPUT_TOKENS = 1500      // enforced via max_tokens in OpenAI request
+export const MAX_INPUT_TOKENS = 10000      // ~40,000 chars total prompt
+export const MAX_OUTPUT_TOKENS = 4000      // enforced via max_tokens in OpenAI request
 export const MAX_USER_MSG_CHARS = 12_000   // Rule 17 — per-message truncation threshold
 
 export const GPT4O_INPUT_COST_PER_TOKEN = 0.0000025   // $2.50 / 1,000,000

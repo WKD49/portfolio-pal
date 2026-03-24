@@ -8,7 +8,9 @@
     "start": "next start"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.100.0",
     "lucide-react": "^0.577.0",
+    "marked": "^17.0.5",
     "next": "16.1.7",
     "react": "19.2.3",
     "react-dom": "19.2.3"

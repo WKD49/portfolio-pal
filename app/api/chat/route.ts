@@ -51,8 +51,12 @@ export async function POST(req: NextRequest) {
     )
   }
 
-  const { messages, logContext }: { messages: Message[]; logContext: LogEntry[] } =
-    await req.json()
+  const { messages, logContext, macroContext, portfolioContext }: {
+    messages: Message[]
+    logContext: LogEntry[]
+    macroContext?: string
+    portfolioContext?: string
+  } = await req.json()
 
   const apiKey = process.env.OPENAI_API_KEY
   const model = process.env.OPENAI_MODEL ?? 'gpt-4o'
@@ -64,8 +68,19 @@ export async function POST(req: NextRequest) {
   // Cap log context to 10 most recent entries (GUARDRAILS Section 3 — Log Context Injection)
   const cappedLogContext = (logContext ?? []).slice(-10)
 
-  // Build system message — inject log context if available
+  // Build system message — inject macro context then log context
   let systemContent = SYSTEM_PROMPT
+
+  // Portfolio structure block — pre-computed look-through from context builder (no £ values)
+  if (portfolioContext) {
+    systemContent += `\n\n${portfolioContext}`
+  }
+
+  // Rule 15 — macro data carries origin metadata (already embedded in the block)
+  if (macroContext) {
+    systemContent += `\n\n${macroContext}`
+  }
+
   if (cappedLogContext.length > 0) {
     const logSummary = cappedLogContext
       .map((entry, i) => {
@@ -135,7 +150,9 @@ export async function POST(req: NextRequest) {
       model,
       messages: fencedMessages,
       stream: true,
-      max_tokens: MAX_OUTPUT_TOKENS, // Rule 16 — enforce output token limit at API level
+      max_tokens: MAX_OUTPUT_TOKENS,
+      temperature: 0.3, // Rule 16 — enforce output token limit at API level
+      response_format: { type: 'json_object' },
     }),
   })
 

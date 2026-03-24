@@ -1,23 +1,18 @@
 'use client'
 
 import { useState, useRef, useEffect, useCallback } from 'react'
-import { Send, RotateCcw, UserCircle } from 'lucide-react'
+import { Send, RotateCcw, UserCircle, BarChart2 } from 'lucide-react'
 import { Message, LogEntry, UserProfile } from '@/lib/types'
 import { MAX_USER_MSG_CHARS } from '@/lib/guardrails'
+import { buildPortfolioContextBlock, buildPortfolioTrace, AccountTrace } from '@/lib/context-builder'
 import MessageBubble from './MessageBubble'
 import LogSidebar from './LogSidebar'
+import PortfolioInspector from './PortfolioInspector'
 
 function formatUserProfile(p: UserProfile): string {
-  const date = new Date(p.sessionDate).toLocaleDateString('en-GB', {
-    day: 'numeric', month: 'long', year: 'numeric',
-  })
-  const lines: string[] = [
-    '--- USER PROFILE ---',
-    `Session date: ${date}`,
-  ]
-  if (p.marketNotes) lines.push(`Market notes: ${p.marketNotes}`)
-  lines.push('')
+  const lines: string[] = ['--- USER PROFILE ---']
   lines.push(`Base currency: ${p.baseCurrency}`)
+  if (p.age) lines.push(`Age: ${p.age}`)
   lines.push(`Risk tolerance: ${p.riskTolerance} / 10`)
   lines.push(`Time horizon: ${p.timeHorizon}`)
   if (p.goals.length > 0) {
@@ -26,19 +21,25 @@ function formatUserProfile(p: UserProfile): string {
     )
     lines.push(`Goals: ${goalLabels.join(', ')}`)
   }
-  lines.push(`Draw income: ${p.drawsIncome ? `Yes — ideally beginning: ${p.incomeStartDate || 'unspecified'}` : 'No'}`)
+  lines.push(`Draws income: ${p.drawsIncome ? `Yes — from: ${p.incomeStartDate || 'unspecified'}` : 'No'}`)
+  if (p.individualPositionsPct && parseFloat(p.individualPositionsPct) > 0) {
+    lines.push(`Individual positions pot: ~${p.individualPositionsPct}% of total portfolio`)
+  }
   lines.push('')
   lines.push('Accounts:')
   p.accounts.forEach((a, i) => {
-    lines.push(`${i + 1}. Description: ${a.description}`)
-    lines.push(`   Tax wrapper: ${a.taxWrapper}`)
-    if (a.approxValue) lines.push(`   Approx value: ${a.approxValue}`)
-    if (a.allocation) lines.push(`   Allocation: ${a.allocation}`)
-    if (a.primaryGoal) lines.push(`   Primary goal: ${a.primaryGoal}`)
+    const label = a.description?.trim() ? `${a.description} (${a.taxWrapper})` : a.taxWrapper
+    lines.push(`${i + 1}. ${label}`)
+    const alloc = a.allocation
+      .filter(item => item.name && item.percentage)
+      .map(item => `${item.name} ${item.percentage}%`)
+      .join(', ')
+    if (alloc) lines.push(`   Holdings: ${alloc}`)
   })
-  if (p.fxExposures) {
+  if (p.marketNotes) {
     lines.push('')
-    lines.push(`FX exposures: ${p.fxExposures}`)
+    lines.push(`[QUALITATIVE MARKET CONTEXT — user-provided interpretation of current conditions]`)
+    lines.push(p.marketNotes)
   }
   lines.push('--- END PROFILE ---')
   return lines.join('\n')
@@ -47,9 +48,20 @@ function formatUserProfile(p: UserProfile): string {
 interface ChatInterfaceProps {
   userProfile?: UserProfile
   onEditProfile?: () => void
+  onNewSession?: () => void
 }
 
 function extractLogEntry(text: string): Omit<LogEntry, 'id' | 'date'> | null {
+  // Primary path: structured JSON response
+  if (text.trim().startsWith('{')) {
+    try {
+      const parsed = JSON.parse(text)
+      if (parsed?.logEntry && typeof parsed.logEntry === 'object') {
+        return parsed.logEntry as Omit<LogEntry, 'id' | 'date'>
+      }
+    } catch { /* fall through */ }
+  }
+  // Legacy fallback: markdown log-entry code block
   const match = text.match(/```log-entry\s*([\s\S]*?)```/)
   if (!match) return null
   try {
@@ -59,7 +71,7 @@ function extractLogEntry(text: string): Omit<LogEntry, 'id' | 'date'> | null {
   }
 }
 
-export default function ChatInterface({ userProfile, onEditProfile }: ChatInterfaceProps) {
+export default function ChatInterface({ userProfile, onEditProfile, onNewSession }: ChatInterfaceProps) {
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
   const [isStreaming, setIsStreaming] = useState(false)
@@ -67,28 +79,55 @@ export default function ChatInterface({ userProfile, onEditProfile }: ChatInterf
   const [logRefresh, setLogRefresh] = useState(0)
   const [error, setError] = useState<string | null>(null)
   const [logWarning, setLogWarning] = useState<string | null>(null)
+  const [macroContext, setMacroContext] = useState<string | null>(null)
+  const [macroWarning, setMacroWarning] = useState<string | null>(null)
+  const [showInspector, setShowInspector] = useState(false)
+  const [portfolioTrace, setPortfolioTrace] = useState<AccountTrace[] | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const initialized = useRef(false)
 
-  // Load log on mount
+  // On mount: load log, fetch macro context, then trigger initial assessment.
+  // Portfolio structure block is built client-side from the profile.
+  // Macro fetch completes first so the very first AI call has live data.
   useEffect(() => {
     fetch('/api/log')
       .then((r) => r.json())
       .then(setLogEntries)
       .catch(() => {})
-  }, [])
 
-  // Trigger first greeting from Portfolio Pal (with profile context if available)
-  useEffect(() => {
-    if (!initialized.current) {
-      initialized.current = true
-      const initial: Message[] = userProfile
-        ? [{ role: 'user', content: formatUserProfile(userProfile) }]
-        : []
-      setMessages(initial)
-      sendToAI(initial, [])
+    if (initialized.current) return
+    initialized.current = true
+
+    // Build portfolio structure context from the user's profile (no £ values sent)
+    const portfolioBlock = userProfile ? buildPortfolioContextBlock(userProfile) : null
+    if (userProfile) {
+      setPortfolioTrace(buildPortfolioTrace(userProfile))
     }
+
+    const initial: Message[] = userProfile
+      ? [{ role: 'user', content: formatUserProfile(userProfile) }]
+      : []
+    setMessages([])
+
+    fetch('/api/macro')
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.contextBlock) {
+          setMacroContext(data.contextBlock)
+          if (data.warnings?.length > 0) {
+            setMacroWarning(`Macro data: ${data.warnings.length} indicator(s) unavailable or stale.`)
+          }
+          sendToAI(initial, [], data.contextBlock, portfolioBlock)
+        } else {
+          setMacroWarning(data.error ?? 'Macro data unavailable — using manual context only.')
+          sendToAI(initial, [], null, portfolioBlock)
+        }
+      })
+      .catch(() => {
+        setMacroWarning('Could not reach macro data service.')
+        sendToAI(initial, [], null, portfolioBlock)
+      })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -119,20 +158,22 @@ export default function ChatInterface({ userProfile, onEditProfile }: ChatInterf
     setLogRefresh((n) => n + 1)
   }, [setLogWarning])
 
-  async function sendToAI(currentMessages: Message[], currentLog: LogEntry[]) {
+  async function sendToAI(currentMessages: Message[], currentLog: LogEntry[], macro: string | null, portfolioBlock?: string | null) {
     setIsStreaming(true)
     setError(null)
 
-    // Add placeholder for streaming message
+    // Add placeholder for streaming message.
+    // Always update the LAST message (the placeholder just added) — do not
+    // derive an index from currentMessages.length, which may not match the
+    // actual messages state when setMessages([]) was called before sendToAI.
     const placeholder: Message = { role: 'assistant', content: '' }
     setMessages((prev) => [...prev, placeholder])
-    const idx = currentMessages.length // index of new assistant message
 
     try {
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: currentMessages, logContext: currentLog }),
+        body: JSON.stringify({ messages: currentMessages, logContext: currentLog, macroContext: macro, portfolioContext: portfolioBlock ?? null }),
       })
 
       if (!res.ok) {
@@ -163,7 +204,7 @@ export default function ChatInterface({ userProfile, onEditProfile }: ChatInterf
               fullText += delta
               setMessages((prev) => {
                 const updated = [...prev]
-                updated[idx] = { role: 'assistant', content: fullText }
+                updated[updated.length - 1] = { role: 'assistant', content: fullText }
                 return updated
               })
             }
@@ -205,7 +246,8 @@ export default function ChatInterface({ userProfile, onEditProfile }: ChatInterf
     setMessages(newMessages)
     setInput('')
 
-    await sendToAI(newMessages, logEntries)
+    const portfolioBlock = userProfile ? buildPortfolioContextBlock(userProfile) : null
+    await sendToAI(newMessages, logEntries, macroContext, portfolioBlock)
   }
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
@@ -220,7 +262,7 @@ export default function ChatInterface({ userProfile, onEditProfile }: ChatInterf
     initialized.current = false
     setTimeout(() => {
       initialized.current = true
-      sendToAI([], logEntries)
+      sendToAI([], logEntries, macroContext)
     }, 50)
   }
 
@@ -278,6 +320,31 @@ export default function ChatInterface({ userProfile, onEditProfile }: ChatInterf
         </div>
 
         <div style={{ display: 'flex', gap: '0.5rem' }}>
+          {portfolioTrace && (
+            <button
+              onClick={() => setShowInspector(true)}
+              disabled={isStreaming}
+              title="View calculations"
+              style={{
+                background: 'none',
+                border: '1px solid var(--border)',
+                borderRadius: '6px',
+                padding: '0.4rem 0.75rem',
+                cursor: isStreaming ? 'not-allowed' : 'pointer',
+                color: 'var(--text-muted)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.4rem',
+                fontSize: '0.72rem',
+                fontFamily: 'Arial, sans-serif',
+                letterSpacing: '0.04em',
+                opacity: isStreaming ? 0.5 : 1,
+              }}
+            >
+              <BarChart2 size={12} />
+              View calculations
+            </button>
+          )}
           {onEditProfile && (
             <button
               onClick={onEditProfile}
@@ -304,7 +371,7 @@ export default function ChatInterface({ userProfile, onEditProfile }: ChatInterf
             </button>
           )}
           <button
-            onClick={handleNewSession}
+            onClick={() => onNewSession ? onNewSession() : handleNewSession()}
             disabled={isStreaming}
             title="New session"
             style={{
@@ -493,11 +560,20 @@ export default function ChatInterface({ userProfile, onEditProfile }: ChatInterf
           }}
         >
           Enter to send · Shift+Enter for new line · This is not financial advice
+          {macroContext
+            ? ' · Macro data: live'
+            : macroWarning
+              ? ` · ⚠ ${macroWarning}`
+              : ' · Macro data: loading…'}
         </div>
       </div>
 
       {/* Log sidebar */}
       <LogSidebar refreshTrigger={logRefresh} />
+
+      {showInspector && portfolioTrace && (
+        <PortfolioInspector trace={portfolioTrace} onClose={() => setShowInspector(false)} />
+      )}
     </div>
   )
 }

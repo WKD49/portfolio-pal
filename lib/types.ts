@@ -18,18 +18,25 @@ export interface LogEntry {
 
 export type LogStatus = 'pending' | 'acted' | 'passed'
 
+export interface AllocationItem {
+  name: string
+  percentage: string
+  // Optional: raw fund composition data pasted/extracted from a product page.
+  // Stored as plain text; the context builder parses it into sub-asset class weights.
+  compositionData?: string
+}
+
 export interface PortfolioAccount {
   description: string
   taxWrapper: string
   approxValue: string
-  allocation: string
-  primaryGoal?: string
+  allocation: AllocationItem[]
 }
 
 export interface UserProfile {
   sessionDate: string
-  marketNotes: string
   baseCurrency: string
+  age: string
   riskTolerance: number
   timeHorizon: string
   goals: string[]
@@ -37,5 +44,8 @@ export interface UserProfile {
   drawsIncome: boolean
   incomeStartDate: string
   accounts: PortfolioAccount[]
-  fxExposures: string
+  // Optional small pot for individual/concentrated positions (% of total portfolio)
+  individualPositionsPct?: string
+  // Optional supplementary market notes (alongside automatic macro data)
+  marketNotes?: string
 }

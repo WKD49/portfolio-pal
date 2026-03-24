@@ -75,7 +75,6 @@ body {
   letter-spacing: -0.01em;
 }
 .prose-pal h2 {
-  font-size: 1rem;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--accent);
@@ -83,14 +82,27 @@ body {
   font-size: 0.7rem;
   margin-top: 1.4em;
 }
+.prose-pal h3 {
+  font-size: 0.95rem;
+  font-family: "Arial", sans-serif;
+  color: var(--text-primary);
+  margin-top: 1.2em;
+  margin-bottom: 0.3em;
+  font-weight: 600;
+}
 .prose-pal p {
   margin: 0.6em 0;
   line-height: 1.7;
 }
-.prose-pal ul,
+.prose-pal ul {
+  margin: 0.6em 0;
+  padding-left: 1.4em;
+  list-style-type: disc;
+}
 .prose-pal ol {
   margin: 0.6em 0;
   padding-left: 1.4em;
+  list-style-type: decimal;
 }
 .prose-pal li {
   margin: 0.3em 0;
